@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
 
 class Habit extends Model
@@ -57,17 +58,20 @@ class Habit extends Model
     }
 
     /**
-     * Get XP reward based on difficulty.
+     * Get XP reward based on difficulty with level bonus.
      */
     public function getXpReward(): int
     {
-        return match ($this->difficulty) {
+        $baseXp = match ($this->difficulty) {
             'EASY' => 5,
             'MEDIUM' => 15,
             'HARD' => 30,
             'VERY_HARD' => 60,
             default => 15,
         };
+
+        // Apply level bonus
+        return $this->user->calculateXpWithBonus($baseXp);
     }
 
     /**
@@ -101,31 +105,33 @@ class Habit extends Model
      */
     public function completeToday(): HabitCompletion
     {
-        $today = Carbon::today()->toDateString();
+        return DB::transaction(function () {
+            $today = Carbon::today()->toDateString();
 
-        // Check if already completed today
-        if ($this->isCompletedToday()) {
-            return $this->completions()->where('completed_date', $today)->first();
-        }
+            // Check if already completed today
+            if ($this->isCompletedToday()) {
+                return $this->completions()->where('completed_date', $today)->first();
+            }
 
-        // Update streak
-        $this->updateStreak();
+            // Update streak
+            $this->updateStreak();
 
-        // Create completion record
-        $completion = $this->completions()->create([
-            'user_id' => $this->user_id,
-            'completed_date' => $today,
-            'xp_earned' => $this->getXpReward(),
-        ]);
+            // Create completion record
+            $completion = $this->completions()->create([
+                'user_id' => $this->user_id,
+                'completed_date' => $today,
+                'xp_earned' => $this->getXpReward(),
+            ]);
 
-        // Award XP and restore HP
-        $this->user->addXp($this->getXpReward());
-        $this->user->restoreHp(5); // Restore 5 HP for habit completion
+            // Award XP and restore HP
+            $this->user->addXp($this->getXpReward());
+            $this->user->restoreHp(5); // Restore 5 HP for habit completion
 
-        $this->last_completed_date = Carbon::today();
-        $this->save();
+            $this->last_completed_date = Carbon::today();
+            $this->save();
 
-        return $completion;
+            return $completion;
+        });
     }
 
     /**
@@ -133,19 +139,107 @@ class Habit extends Model
      */
     protected function updateStreak(): void
     {
-        $yesterday = Carbon::yesterday()->format('Y-m-d');
-        $today = Carbon::today()->format('Y-m-d');
-        $lastCompleted = $this->last_completed_date?->format('Y-m-d');
+        $today = Carbon::today();
+        $lastCompleted = $this->last_completed_date;
 
-        if ($lastCompleted === $yesterday) {
-            // Continue streak
+        if (!$lastCompleted) {
+            // First time completing
+            $this->current_streak = 1;
+            return;
+        }
+
+        if ($this->schedule_type === 'SPECIFIC_DAYS') {
+            // For specific days, check if we're continuing from the last valid day
+            $this->updateStreakForSpecificDays($today, $lastCompleted);
+        } else {
+            // For DAILY and WEEKLY, check consecutive days
+            $yesterday = Carbon::yesterday();
+
+            if ($lastCompleted->format('Y-m-d') === $yesterday->format('Y-m-d')) {
+                // Continue streak
+                $this->current_streak++;
+            } elseif ($lastCompleted->format('Y-m-d') === $today->format('Y-m-d')) {
+                // Already completed today, don't change streak
+            } else {
+                // Restart streak
+                $this->current_streak = 1;
+            }
+        }
+    }
+
+    /**
+     * Update streak for habits with SPECIFIC_DAYS schedule.
+     */
+    protected function updateStreakForSpecificDays(Carbon $today, Carbon $lastCompleted): void
+    {
+        // Get the last valid day before today
+        $lastValidDay = $this->getLastValidDayBefore($today);
+
+        if ($lastValidDay && $lastCompleted->format('Y-m-d') === $lastValidDay->format('Y-m-d')) {
+            // Continue streak - completed on the last valid day
             $this->current_streak++;
-        } elseif ($lastCompleted === $today) {
+        } elseif ($lastCompleted->format('Y-m-d') === $today->format('Y-m-d')) {
             // Already completed today, don't change streak
         } else {
-            // Restart streak
-            $this->current_streak = 1;
+            // Check if we missed any valid days since last completion
+            $startCheck = $lastCompleted->copy()->addDay();
+            $endCheck = $today->copy()->subDay();
+            $missedValidDays = $this->countValidDaysBetween($startCheck, $endCheck);
+
+            if ($missedValidDays > 0) {
+                // Restart streak - missed some valid days
+                $this->current_streak = 1;
+            } else {
+                // Continue streak - no valid days were missed
+                $this->current_streak++;
+            }
         }
+    }
+
+    /**
+     * Get the last valid day before the given date.
+     */
+    protected function getLastValidDayBefore(Carbon $date): ?Carbon
+    {
+        $checkDate = $date->copy()->subDay();
+
+        // Look back up to 7 days to find the last valid day
+        for ($i = 0; $i < 7; $i++) {
+            $dayOfWeek = strtolower($checkDate->format('l'));
+
+            if ($this->{"is_on_" . $dayOfWeek}) {
+                return $checkDate;
+            }
+
+            $checkDate->subDay();
+        }
+
+        return null;
+    }
+
+    /**
+     * Count valid days between two dates (exclusive).
+     */
+    protected function countValidDaysBetween(Carbon $start, Carbon $end): int
+    {
+        if ($start->gte($end)) {
+            return 0;
+        }
+
+        $count = 0;
+        $current = $start->copy();
+
+        while ($current->lte($end)) {
+            $dayOfWeek = strtolower($current->format('l'));
+
+            if ($this->{"is_on_" . $dayOfWeek}) {
+                $count++;
+            }
+
+            $current->addDay();
+        }
+
+        return $count;
     }
 
     /**

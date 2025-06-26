@@ -6,6 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
@@ -81,13 +82,15 @@ class User extends Authenticatable
      */
     public function addXp(int $xp): void
     {
-        $this->xp += $xp;
+        DB::transaction(function () use ($xp) {
+            $this->xp += $xp;
 
-        while ($this->xp >= $this->xp_to_next_level) {
-            $this->levelUp();
-        }
+            while ($this->xp >= $this->xp_to_next_level) {
+                $this->levelUp();
+            }
 
-        $this->save();
+            $this->save();
+        });
     }
 
     /**
@@ -106,7 +109,8 @@ class User extends Authenticatable
      */
     protected function calculateXpToNextLevel(): int
     {
-        return 100 + ($this->level * 50); // Base 100 + 50 per level
+        // Reduced progression: Base 100 + 25 per level (instead of 50)
+        return 100 + ($this->level * 25);
     }
 
     /**
@@ -139,5 +143,21 @@ class User extends Authenticatable
     {
         $this->hp = min(100, $this->hp + $amount);
         $this->save();
+    }
+
+    /**
+     * Get user gamification data for API response.
+     */
+    public function getGamificationData(): array
+    {
+        return [
+            'level' => $this->level,
+            'xp' => $this->xp,
+            'xp_to_next_level' => $this->xp_to_next_level,
+            'hp' => $this->hp,
+            'title' => $this->title,
+            'xp_bonus_multiplier' => $this->getXpBonusMultiplier(),
+            'next_level_xp_requirement' => $this->calculateXpToNextLevel(),
+        ];
     }
 }

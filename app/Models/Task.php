@@ -4,6 +4,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\DB;
 
 class Task extends Model
 {
@@ -44,17 +45,20 @@ class Task extends Model
     }
 
     /**
-     * Get XP reward based on difficulty.
+     * Get XP reward based on difficulty with level bonus.
      */
     public function getXpReward(): int
     {
-        return match ($this->difficulty) {
+        $baseXp = match ($this->difficulty) {
             'EASY' => 10,
             'MEDIUM' => 25,
             'HARD' => 50,
             'VERY_HARD' => 100,
             default => 25,
         };
+
+        // Apply level bonus
+        return $this->user->calculateXpWithBonus($baseXp);
     }
 
     /**
@@ -76,12 +80,14 @@ class Task extends Model
      */
     public function complete(): void
     {
-        $this->is_completed = true;
-        $this->completed_at = now();
-        $this->save();
+        DB::transaction(function () {
+            $this->is_completed = true;
+            $this->completed_at = now();
+            $this->save();
 
-        // Award XP to user
-        $this->user->addXp($this->getXpReward());
+            // Award XP to user
+            $this->user->addXp($this->getXpReward());
+        });
     }
 
     /**
@@ -90,11 +96,13 @@ class Task extends Model
     public function applyPenalty(): void
     {
         if (!$this->penalty_applied && $this->deadline && now()->greaterThan($this->deadline) && !$this->is_completed) {
-            $this->penalty_applied = true;
-            $this->save();
+            DB::transaction(function () {
+                $this->penalty_applied = true;
+                $this->save();
 
-            // Reduce user HP
-            $this->user->reduceHp($this->getHpPenalty());
+                // Reduce user HP
+                $this->user->reduceHp($this->getHpPenalty());
+            });
         }
     }
 }
