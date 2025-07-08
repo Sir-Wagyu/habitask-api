@@ -70,8 +70,12 @@ class Habit extends Model
             default => 15,
         };
 
-        // Apply level bonus
-        return $this->user->calculateXpWithBonus($baseXp);
+        // Apply level bonus - ensure user is loaded
+        if (!$this->relationLoaded('user')) {
+            $this->load('user');
+        }
+
+        return $this->user ? $this->user->calculateXpWithBonus($baseXp) : $baseXp;
     }
 
     /**
@@ -113,18 +117,26 @@ class Habit extends Model
                 return $this->completions()->where('completed_date', $today)->first();
             }
 
+            // Ensure user relationship is loaded
+            if (!$this->relationLoaded('user')) {
+                $this->load('user');
+            }
+
             // Update streak
             $this->updateStreak();
+
+            // Get XP reward
+            $xpReward = $this->getXpReward();
 
             // Create completion record
             $completion = $this->completions()->create([
                 'user_id' => $this->user_id,
                 'completed_date' => $today,
-                'xp_earned' => $this->getXpReward(),
+                'xp_earned' => $xpReward,
             ]);
 
             // Award XP and restore HP
-            $this->user->addXp($this->getXpReward());
+            $this->user->addXp($xpReward);
             $this->user->restoreHp(5); // Restore 5 HP for habit completion
 
             $this->last_completed_date = Carbon::today();

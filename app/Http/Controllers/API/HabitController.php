@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Habit;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Validator;
 
 class HabitController extends Controller
@@ -36,6 +37,14 @@ class HabitController extends Controller
             'title' => 'required|string|max:255',
             'description' => 'nullable|string',
             'difficulty' => 'required|in:EASY,MEDIUM,HARD,VERY_HARD',
+            'schedule_type' => 'required|in:DAILY,WEEKLY,SPECIFIC_DAYS',
+            'is_on_monday' => 'boolean',
+            'is_on_tuesday' => 'boolean',
+            'is_on_wednesday' => 'boolean',
+            'is_on_thursday' => 'boolean',
+            'is_on_friday' => 'boolean',
+            'is_on_saturday' => 'boolean',
+            'is_on_sunday' => 'boolean',
         ]);
 
         if ($validator->fails()) {
@@ -46,12 +55,28 @@ class HabitController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $habit = Habit::create([
+        $habitData = [
             'user_id' => $request->user()->id,
             'title' => $request->title,
             'description' => $request->description,
             'difficulty' => $request->difficulty,
-        ]);
+            'schedule_type' => $request->schedule_type,
+        ];
+
+        // Add schedule specific fields
+        if ($request->schedule_type === 'SPECIFIC_DAYS') {
+            $habitData = array_merge($habitData, [
+                'is_on_monday' => $request->boolean('is_on_monday'),
+                'is_on_tuesday' => $request->boolean('is_on_tuesday'),
+                'is_on_wednesday' => $request->boolean('is_on_wednesday'),
+                'is_on_thursday' => $request->boolean('is_on_thursday'),
+                'is_on_friday' => $request->boolean('is_on_friday'),
+                'is_on_saturday' => $request->boolean('is_on_saturday'),
+                'is_on_sunday' => $request->boolean('is_on_sunday'),
+            ]);
+        }
+
+        $habit = Habit::create($habitData);
 
         return response()->json([
             'success' => true,
@@ -98,6 +123,14 @@ class HabitController extends Controller
             'title' => 'sometimes|required|string|max:255',
             'description' => 'nullable|string',
             'difficulty' => 'sometimes|required|in:EASY,MEDIUM,HARD,VERY_HARD',
+            'schedule_type' => 'sometimes|required|in:DAILY,WEEKLY,SPECIFIC_DAYS',
+            'is_on_monday' => 'boolean',
+            'is_on_tuesday' => 'boolean',
+            'is_on_wednesday' => 'boolean',
+            'is_on_thursday' => 'boolean',
+            'is_on_friday' => 'boolean',
+            'is_on_saturday' => 'boolean',
+            'is_on_sunday' => 'boolean',
         ]);
 
         if ($validator->fails()) {
@@ -108,7 +141,18 @@ class HabitController extends Controller
             ], Response::HTTP_UNPROCESSABLE_ENTITY);
         }
 
-        $habit->update($request->only(['title', 'description', 'difficulty']));
+        $updateData = $request->only(['title', 'description', 'difficulty', 'schedule_type']);
+
+        // Add schedule specific fields if present
+        if ($request->has('is_on_monday')) $updateData['is_on_monday'] = $request->boolean('is_on_monday');
+        if ($request->has('is_on_tuesday')) $updateData['is_on_tuesday'] = $request->boolean('is_on_tuesday');
+        if ($request->has('is_on_wednesday')) $updateData['is_on_wednesday'] = $request->boolean('is_on_wednesday');
+        if ($request->has('is_on_thursday')) $updateData['is_on_thursday'] = $request->boolean('is_on_thursday');
+        if ($request->has('is_on_friday')) $updateData['is_on_friday'] = $request->boolean('is_on_friday');
+        if ($request->has('is_on_saturday')) $updateData['is_on_saturday'] = $request->boolean('is_on_saturday');
+        if ($request->has('is_on_sunday')) $updateData['is_on_sunday'] = $request->boolean('is_on_sunday');
+
+        $habit->update($updateData);
 
         return response()->json([
             'success' => true,
@@ -144,31 +188,45 @@ class HabitController extends Controller
      */
     public function complete(Request $request, Habit $habit)
     {
-        if ($habit->user_id !== $request->user()->id) {
+        try {
+            if ($habit->user_id !== $request->user()->id) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Unauthorized'
+                ], Response::HTTP_FORBIDDEN);
+            }
+
+            if ($habit->isCompletedToday()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Habit already completed today'
+                ], Response::HTTP_BAD_REQUEST);
+            }
+
+            $completion = $habit->completeToday();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Habit completed successfully',
+                'data' => [
+                    'habit' => $habit->fresh(),
+                    'completion' => $completion,
+                    'xp_earned' => $completion->xp_earned
+                ]
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error completing habit: ' . $e->getMessage(), [
+                'habit_id' => $habit->id,
+                'user_id' => $request->user()->id,
+                'trace' => $e->getTraceAsString()
+            ]);
+
             return response()->json([
                 'success' => false,
-                'message' => 'Unauthorized'
-            ], Response::HTTP_FORBIDDEN);
+                'message' => 'An error occurred while completing the habit',
+                'error' => $e->getMessage()
+            ], Response::HTTP_INTERNAL_SERVER_ERROR);
         }
-
-        if ($habit->isCompletedToday()) {
-            return response()->json([
-                'success' => false,
-                'message' => 'Habit already completed today'
-            ], Response::HTTP_BAD_REQUEST);
-        }
-
-        $completion = $habit->completeToday();
-
-        return response()->json([
-            'success' => true,
-            'message' => 'Habit completed successfully',
-            'data' => [
-                'habit' => $habit->fresh(),
-                'completion' => $completion,
-                'xp_earned' => $completion->xp_earned
-            ]
-        ]);
     }
 
     /**

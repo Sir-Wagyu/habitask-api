@@ -234,7 +234,7 @@ Headers: `Authorization: Bearer {token}`
 
 ### 6. Complete Habit Today
 
-**POST** `/habits/{id}/complete`
+**PATCH** `/habits/{id}/complete`
 Headers: `Authorization: Bearer {token}`
 
 Response includes XP earned and updated streak.

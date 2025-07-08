@@ -57,9 +57,14 @@ class Task extends Model
             default => 25,
         };
 
-        // Apply level bonus
-        return $this->user->calculateXpWithBonus($baseXp);
+        // Apply level bonus - ensure user is loaded
+        if (!$this->relationLoaded('user')) {
+            $this->load('user');
+        }
+
+        return $this->user ? $this->user->calculateXpWithBonus($baseXp) : $baseXp;
     }
+
 
     /**
      * Get HP penalty based on difficulty.

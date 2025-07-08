@@ -114,6 +114,28 @@ class User extends Authenticatable
     }
 
     /**
+     * Get XP bonus multiplier based on user level.
+     */
+    public function getXpBonusMultiplier(): float
+    {
+        return match (true) {
+            $this->level >= 20 => 2.0,  // 100% bonus at level 20+
+            $this->level >= 15 => 1.75, // 75% bonus at level 15-19
+            $this->level >= 10 => 1.5,  // 50% bonus at level 10-14
+            $this->level >= 5 => 1.25,  // 25% bonus at level 5-9
+            default => 1.0,             // No bonus at level 1-4
+        };
+    }
+
+    /**
+     * Calculate final XP with level bonus.
+     */
+    public function calculateXpWithBonus(int $baseXp): int
+    {
+        return (int) ($baseXp * $this->getXpBonusMultiplier());
+    }
+
+    /**
      * Get title based on level.
      */
     protected function getLevelTitle(): string
